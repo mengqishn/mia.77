@@ -1,0 +1,7 @@
+interface:
+  display_name: "RedBook Skills"
+  short_description: "小红书运营分析、知识库与自动化执行技能"
+  default_prompt: "Use $redbook-skills to analyze RedBook notes, build reusable patterns, and automate publishing workflows."
+
+policy:
+  allow_implicit_invocation: true
