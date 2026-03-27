@@ -123,7 +123,7 @@ NOTE_EVAL = r"""
 
 
 def note_id_from_url(url: str) -> str:
-    match = re.search(r"/explore/([^/?]+)", url)
+    match = re.search(r"/explore/([^/?]+)", url) or re.search(r"/user/profile/[^/]+/([^/?]+)", url)
     return match.group(1) if match else "unknown-note"
 
 

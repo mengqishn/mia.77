@@ -66,6 +66,29 @@ def query_page_by_url(token: str, database_id: str, target_url: str) -> Optional
     return results[0] if results else None
 
 
+def query_page_by_note_id(token: str, database_id: str, note_id: str) -> Optional[dict[str, Any]]:
+    if not note_id:
+        return None
+    payload = {
+        "filter": {
+            "property": "素材名称",
+            "title": {
+                "contains": note_id,
+            },
+        },
+        "sorts": [
+            {
+                "timestamp": "last_edited_time",
+                "direction": "descending",
+            }
+        ],
+        "page_size": 1,
+    }
+    response = notion_request(token, "POST", f"/databases/{database_id}/query", payload)
+    results = response.get("results") or []
+    return results[0] if results else None
+
+
 def get_database_property_names(token: str, database_id: str) -> set[str]:
     response = notion_request(token, "GET", f"/databases/{database_id}")
     return set((response.get("properties") or {}).keys())
@@ -466,6 +489,8 @@ def import_single_url(args, database_property_names: set[str], url: str) -> dict
     children = build_children(metadata, local_dir)
 
     existing = query_page_by_url(args.notion_token, args.database_id, metadata.get("url") or "")
+    if not existing:
+        existing = query_page_by_note_id(args.notion_token, args.database_id, metadata.get("note_id") or "")
     if existing:
         page = update_page(args.notion_token, existing["id"], properties)
         append_children(args.notion_token, existing["id"], children)

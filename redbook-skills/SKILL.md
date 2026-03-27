@@ -1,6 +1,6 @@
 ---
 name: redbook-skills
-description: 小红书/RedBook 运营与自动化执行技能。Use when Codex needs to analyze the RedBook home feed, inspect an account's定位与爆款差异, generate topic ideas from prior patterns, maintain a markdown knowledge base, batch import RedBook note URLs into a Notion 素材库 with note-level viral-learning summaries, download a target note's assets/text, recreate a viral note, or automate RedBook publishing and comment replies through Playwright plus a local Chrome login state instead of OpenClaw.
+description: 小红书/RedBook 运营与自动化执行技能。Use when Codex needs to analyze the RedBook home feed, inspect an account's定位与爆款差异, collect all note URLs from a RedBook profile, batch import RedBook note URLs into a Notion 素材库 with note-level viral-learning summaries, generate topic ideas from prior patterns, maintain a markdown knowledge base, download a target note's assets/text, recreate a viral note, or automate RedBook publishing and comment replies through Playwright plus a local Chrome login state instead of OpenClaw.
 ---
 
 # RedBook Skills
@@ -93,6 +93,14 @@ description: 小红书/RedBook 运营与自动化执行技能。Use when Codex n
 - 可批量接收多个 `--url`，或从 `--url-file` 读取一批链接。
 - 适合用在爆款笔记收集、拆解入库、后续自动化发帖前的数据整理。
 
+### 7.6 账号页整号导入
+
+目标：给一个小红书账号主页，收集该账号当前可见的全部笔记链接，再整号导入到 Notion 爆款素材库。
+
+- 优先抓账号卡片里的可见 `xsec` 链接，不直接退化成裸 `/explore/{note_id}`。
+- 先输出链接清单，再交给 `import_redbook_note_to_notion.py` 批量导入。
+- 适合做竞品库、账号拆解、批量学习型素材库搭建。
+
 ### 8. 爆款笔记复刻
 
 目标：输入一条爆款链接，产出同主题、同互动机制、但不逐字复制的新笔记。
@@ -126,6 +134,8 @@ description: 小红书/RedBook 运营与自动化执行技能。Use when Codex n
   读取一条笔记 URL，提取标题、作者、正文、互动数据、图片链接；可选下载图片。
 - `scripts/import_redbook_note_to_notion.py`
   批量读取笔记 URL，保存 `metadata + 图片` 到本地，再 upsert 到 Notion 爆款素材库，并写入笔记级爆款学习结论。
+- `scripts/collect_redbook_profile_note_urls.py`
+  打开小红书账号主页，滚动收集当前账号可见的全部笔记链接，并导出 JSON 和 URL 文件，供后续整号批量导入。
 - `scripts/scan_redbook_home_feed.py`
   打开首页推荐流，抓取前若干条卡片用于首页推荐流分析。
 - `scripts/redbook_browser_common.py`
