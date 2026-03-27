@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -57,6 +58,45 @@ PROFILE_EVAL = r"""
 """
 
 
+SCROLL_TO_BOTTOM_EVAL = r"""
+() => {
+  const doc = document.documentElement;
+  const body = document.body;
+  const maxHeight = Math.max(
+    doc ? doc.scrollHeight : 0,
+    body ? body.scrollHeight : 0,
+    document.scrollingElement ? document.scrollingElement.scrollHeight : 0
+  );
+
+  window.scrollTo(0, maxHeight);
+  if (document.scrollingElement) {
+    document.scrollingElement.scrollTop = maxHeight;
+  }
+  if (doc) {
+    doc.scrollTop = maxHeight;
+  }
+  if (body) {
+    body.scrollTop = maxHeight;
+  }
+
+  const lastCard = document.querySelector("section.note-item:last-of-type");
+  if (lastCard && typeof lastCard.scrollIntoView === "function") {
+    lastCard.scrollIntoView({ block: "end", inline: "nearest" });
+  }
+
+  return {
+    scroll_top:
+      (document.scrollingElement && document.scrollingElement.scrollTop) ||
+      (doc && doc.scrollTop) ||
+      (body && body.scrollTop) ||
+      0,
+    scroll_height: maxHeight,
+    note_items: document.querySelectorAll("section.note-item").length
+  };
+}
+"""
+
+
 def normalize_note_url(href: str) -> str:
     href = (href or "").strip()
     if not href:
@@ -81,7 +121,7 @@ def dedupe_notes(notes: list[dict]) -> list[dict]:
     unique = []
     seen = set()
     for note in notes:
-        href = normalize_note_url(note.get("href", ""))
+        href = normalize_note_url(note.get("href") or note.get("url") or "")
         note_id = note_id_from_url(href)
         key = note_id or href
         if not key or key in seen:
@@ -96,6 +136,25 @@ def dedupe_notes(notes: list[dict]) -> list[dict]:
             }
         )
     return unique
+
+
+def normalize_api_note(note: dict, fallback_user_id: str) -> dict:
+    note_id = (note.get("note_id") or "").strip()
+    user = note.get("user") or {}
+    user_id = user.get("user_id") or fallback_user_id
+    xsec_token = note.get("xsec_token") or ""
+    url = ""
+    if user_id and note_id and xsec_token:
+        url = (
+            f"https://www.xiaohongshu.com/user/profile/{user_id}/{note_id}"
+            f"?xsec_token={xsec_token}&xsec_source=pc_user"
+        )
+    return {
+        "note_id": note_id,
+        "url": url,
+        "title": (note.get("display_title") or "").strip(),
+        "summary": f"{user.get('nick_name') or user.get('nickname') or ''} {(note.get('interact_info') or {}).get('liked_count') or ''}".strip(),
+    }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -125,38 +184,88 @@ def main() -> int:
         cdp_url=args.cdp_url,
     ) as context:
         page = context.pages[0] if context.pages else context.new_page()
+        api_notes: list[dict] = []
+        api_cursors: list[str] = []
+        seen_api_note_ids: set[str] = set()
+        seen_api_cursors: set[str] = set()
+        api_exhausted = False
+
+        def on_response(resp):
+            nonlocal api_exhausted
+            try:
+                url = resp.url
+                ctype = resp.headers.get("content-type", "")
+                if "json" not in ctype or "/api/sns/web/v1/user_posted" not in url:
+                    return
+                payload = json.loads(resp.text())
+                data = payload.get("data") or {}
+                cursor = data.get("cursor", "")
+                if cursor is not None:
+                    cursor_text = str(cursor)
+                    if cursor_text not in seen_api_cursors:
+                        seen_api_cursors.add(cursor_text)
+                        api_cursors.append(cursor_text)
+                    if cursor == "":
+                        api_exhausted = True
+                user_id = ""
+                match = re.search(r"user_id=([^&]+)", url)
+                if match:
+                    user_id = match.group(1)
+                for note in data.get("notes") or []:
+                    normalized = normalize_api_note(note, user_id)
+                    note_id = normalized.get("note_id") or ""
+                    if note_id and note_id not in seen_api_note_ids:
+                        seen_api_note_ids.add(note_id)
+                        api_notes.append(normalized)
+            except BaseException:
+                return
+
+        page.on("response", on_response)
         page.goto(args.profile_url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(3000)
 
         best_payload = None
         last_count = 0
+        last_api_note_count = 0
+        last_api_cursor_count = 0
         idle_rounds = 0
 
         for _ in range(args.max_scrolls):
-            page.wait_for_timeout(1800)
+            page.evaluate(SCROLL_TO_BOTTOM_EVAL)
+            page.wait_for_timeout(2400)
             payload = page.evaluate(PROFILE_EVAL)
-            notes = dedupe_notes(payload.get("notes") or [])
+            notes = dedupe_notes((payload.get("notes") or []) + api_notes)
             payload["notes"] = notes
+            payload["api_cursor_count"] = len(api_cursors)
+            payload["api_note_count"] = len(api_notes)
+            payload["api_exhausted"] = api_exhausted
             count = len(notes)
             if best_payload is None or count > len(best_payload.get("notes") or []):
                 best_payload = payload
 
-            if count > last_count:
+            if (
+                count > last_count
+                or len(api_notes) > last_api_note_count
+                or len(api_cursors) > last_api_cursor_count
+            ):
                 idle_rounds = 0
                 last_count = count
+                last_api_note_count = len(api_notes)
+                last_api_cursor_count = len(api_cursors)
             else:
                 idle_rounds += 1
 
             if args.limit and count >= args.limit:
                 break
-            if idle_rounds >= args.idle_rounds:
+            if api_exhausted and idle_rounds >= args.idle_rounds:
                 break
-
-            page.mouse.wheel(0, 2400)
 
         if best_payload is None:
             best_payload = page.evaluate(PROFILE_EVAL)
-            best_payload["notes"] = dedupe_notes(best_payload.get("notes") or [])
+            best_payload["notes"] = dedupe_notes((best_payload.get("notes") or []) + api_notes)
+            best_payload["api_cursor_count"] = len(api_cursors)
+            best_payload["api_note_count"] = len(api_notes)
+            best_payload["api_exhausted"] = api_exhausted
 
         if args.limit:
             best_payload["notes"] = best_payload["notes"][: args.limit]
